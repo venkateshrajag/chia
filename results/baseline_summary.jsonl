@@ -1,0 +1,4 @@
+{"model": "gemini-2.5-flash", "n": 20, "acc": 1.0, "precision_fail": 1.0, "recall_fail": 1.0, "f1_fail": 1.0, "in_tok": 4888, "out_tok": 20, "cost": 0.0015163999999999998, "majority": 0.65}
+{"model": "gemini-2.5-flash", "n": 629, "acc": 0.8616852146263911, "precision_fail": 0.7790055248618785, "recall_fail": 0.9757785467128027, "f1_fail": 0.8663594470046083, "in_tok": 336398, "out_tok": 749, "cost": 0.10279189999999999, "majority": 0.5405405405405406}
+{"model": "gemini-2.5-flash-lite", "n": 630, "acc": 0.680952380952381, "precision_fail": 0.5932203389830508, "recall_fail": 0.9688581314878892, "f1_fail": 0.7358738501971092, "in_tok": 337201, "out_tok": 630, "cost": 0.0339721, "majority": 0.5412698412698412}
+{"model": "gemini-2.5-pro", "n": 626, "acc": 0.8146964856230032, "precision_fail": 0.7146401985111662, "recall_fail": 0.9965397923875432, "f1_fail": 0.8323699421965318, "in_tok": 333796, "out_tok": 591, "cost": 0.423155, "majority": 0.5383386581469649}

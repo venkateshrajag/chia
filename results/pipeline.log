@@ -1,0 +1,87 @@
+nohup: ignoring input
+=== BASE (control) ===
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:05<00:15,  5.32s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:11<00:11,  5.95s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:17<00:05,  5.82s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:17<00:00,  3.64s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:17<00:00,  4.42s/it]
+scoring UNTRAINED base model
+PASS token ids [6385, 12187, 49792, 50835]   FAIL token ids [18403, 19524, 33107, 36973]
+  100/630
+  200/630
+  300/630
+  400/630
+  500/630
+  600/630
+
+===== BASE: Qwen/Qwen2.5-Coder-7B-Instruct =====
+examples 630   elapsed 159.2s   3.96/s
+
+confusion at threshold 0.5 (positive = FAIL)
+              truth FAIL   truth PASS
+  pred FAIL          212          166
+  pred PASS           77          175
+
+accuracy             61.43%   (majority baseline 54.13%)
+precision on FAIL    56.08%
+recall on FAIL       73.36%
+F1 on FAIL           63.57%
+
+throughput          3.96 decisions/s
+cost per 1k calls   $0.0491   (at $0.7/hr)
+
+threshold sweep - how the gate can be tuned
+ thresh     acc  prec_FAIL  rec_FAIL  blocked  good lost
+   0.30   60.2%      54.4%     81.7%      434        198
+   0.50   61.4%      56.1%     73.4%      378        166
+   0.70   63.5%      58.9%     67.5%      331        136
+   0.80   63.0%      59.2%     62.3%      304        124
+   0.90   63.7%      61.4%     56.1%      264        102
+   0.95   64.8%      69.1%     41.9%      175         54
+
+by family
+  benign   n=  252  accuracy  55.6%
+  faulty   n=  340  accuracy  65.6%
+  none     n=   38  accuracy  63.2%
+
+wrote preds_base.jsonl
+=== TUNED ===
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:05<00:15,  5.31s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:11<00:11,  5.95s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:17<00:05,  5.81s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:17<00:00,  3.64s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:17<00:00,  4.41s/it]
+loaded adapter: ./adapter_7b
+PASS token ids [6385, 12187, 49792, 50835]   FAIL token ids [18403, 19524, 33107, 36973]
+  100/630
+  200/630
+  300/630
+  400/630
+  500/630
+  600/630
+
+===== TUNED: Qwen/Qwen2.5-Coder-7B-Instruct =====
+examples 630   elapsed 204.7s   3.08/s
+
+confusion at threshold 0.5 (positive = FAIL)
+              truth FAIL   truth PASS
+  pred FAIL          245           49
+  pred PASS           44          292
+
+accuracy             85.24%   (majority baseline 54.13%)
+precision on FAIL    83.33%
+recall on FAIL       84.78%
+F1 on FAIL           84.05%
+
+throughput          3.08 decisions/s
+cost per 1k calls   $0.0632   (at $0.7/hr)
+
+threshold sweep - how the gate can be tuned
+ thresh     acc  prec_FAIL  rec_FAIL  blocked  good lost
+   0.30   82.5%      75.4%     92.0%      353         87
+   0.50   85.2%      83.3%     84.8%      294         49
+   0.70   83.7%      86.9%     75.8%      252         33
+   0.80   81.6%      87.8%     69.6%      229         28
+   0.90   80.2%      92.7%     61.6%      192         14
+   0.95   77.0%      95.0%     52.6%      160          8
+
+by family
+  benign   n=  252  accuracy  94.8%
+  faulty   n=  340  accuracy  79.4%
+  none     n=   38  accuracy  76.3%
+
+wrote preds_tuned.jsonl

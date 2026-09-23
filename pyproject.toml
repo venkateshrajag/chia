@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chia-governor"
+version = "0.1.0"
+description = "Reusable cost-governance blocks for agentic hardware design loops"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "BSD-3-Clause" }
+dependencies = []
+
+[project.optional-dependencies]
+local = ["torch", "transformers>=4.44", "peft>=0.11", "accelerate", "bitsandbytes"]
+
+[tool.setuptools.packages.find]
+include = ["chia_governor*"]
