@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CHIA-Governor</title>
+<style>
+  @page { size: letter; margin: 0.72in 0.62in; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 9.1pt;
+    line-height: 1.24;
+    color: #000;
+    margin: 0;
+  }
+  .head { text-align: center; margin-bottom: 9pt; }
+  h1 { font-size: 15pt; margin: 0 0 4pt 0; line-height: 1.18; }
+  .authors { font-size: 10pt; margin: 0 0 1pt 0; }
+  .affil { font-size: 9pt; font-style: italic; color: #222; margin: 0; }
+  .cols { column-count: 2; column-gap: 0.28in; }
+  h2 {
+    font-size: 9.8pt; margin: 8pt 0 3pt 0; text-transform: uppercase;
+    letter-spacing: 0.3pt; break-after: avoid;
+  }
+  h3 { font-size: 9.3pt; margin: 6pt 0 2pt 0; font-style: italic; break-after: avoid; }
+  p { margin: 0 0 4pt 0; text-align: justify; }
+  .abs { margin: 0 0 7pt 0; }
+  .abs p { font-size: 8.9pt; }
+  table {
+    width: 100%; border-collapse: collapse; margin: 4pt 0 5pt 0;
+    font-size: 7.9pt; break-inside: avoid;
+  }
+  caption {
+    caption-side: top; text-align: left; font-size: 8.1pt;
+    padding-bottom: 2pt; font-style: italic;
+  }
+  th {
+    text-align: left; border-bottom: 0.7pt solid #000;
+    border-top: 0.7pt solid #000; padding: 2pt 3pt; font-weight: bold;
+  }
+  td { padding: 1.5pt 3pt; border-bottom: 0.3pt solid #ccc; }
+  td.n, th.n { text-align: right; }
+  tr.last td { border-bottom: 0.7pt solid #000; }
+  code { font-family: "Courier New", monospace; font-size: 8.3pt; }
+  .note { font-size: 8.2pt; font-style: italic; color: #333; margin-top: -2pt; }
+  ol, ul { margin: 0 0 4pt 0; padding-left: 12pt; }
+  li { margin-bottom: 1.5pt; text-align: justify; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>CHIA-Governor: Cost Governance for Agentic Hardware Design Loops,<br>
+      and a Small Model That Knows When Not to Simulate</h1>
+  <p class="authors">Venkatesh Rajagopal</p>
+  <p class="affil">Independent &middot; venkatesh.rajagopal@gmail.com</p>
+</div>
+
+<div class="cols">
+
+<div class="abs">
+<h2>Abstract</h2>
+<p>Agentic hardware design loops spend a large share of their budget on
+iterations that produce nothing. We present <strong>CHIA-Governor</strong>,
+three reusable blocks for the CHIA framework that reduce that waste without
+changing the result a loop produces: a cost ledger, a triage gate that blocks
+doomed candidates before simulation, and a plateau monitor that stops a loop
+once improvement per dollar flatlines. To populate the gate we build a dataset
+of 2,571 Verilog candidates whose pass/fail labels come from actually running
+VerilogEval test benches, and fine-tune Qwen2.5-Coder-7B on it with LoRA in 72
+minutes on a single NVIDIA L4. The resulting model reaches <strong>83.3%
+precision</strong> on predicting simulation failure, higher than Gemini 2.5
+Flash (77.9%), Pro (71.5%) and Flash-Lite (59.3%), at roughly a quarter of
+Flash's cost and a twentieth of its latency. The gain comes from a specific,
+diagnosable place: every frontier model we tested assumes that any edit to
+working code is a bug, and therefore discards between 23% and 56% of
+genuinely good designs. Our model discards 14%.</p>
+</div>
+
+<h2>1. The problem</h2>
+
+<p>A CHIA loop repeats a cycle: an agent proposes a change to a design, tools
+evaluate it, and the loop decides whether to continue. The published CHIA
+results show how much of that cycle is wasted. The critical-path optimization
+study ran 14 iterations at roughly $14.43 each but had already plateaued after
+the eighth, so approximately half of its $202.03 bought nothing. The
+gem5-alignment study ran 202 iterations for $2,355.98.</p>
+
+<p>Two distinct wastes are visible here. The loop does not know when to stop,
+and it sends every proposed candidate to the expensive evaluation stage
+regardless of how likely that candidate is to fail. CHIA is an excellent
+framework for <em>expressing</em> such loops. It provides nothing reusable for
+<em>governing</em> what they cost.</p>
+
+<p>The framework's own most striking positive finding points the same
+direction: adding a single "Run &amp; Compare" tool, letting the agent
+empirically test its own changes, doubled the improvement rate per iteration.
+Feedback quality and spend discipline, not iteration count, determine whether
+a loop converges.</p>
+
+<h2>2. CHIA-Governor</h2>
+
+<p>We contribute three composable blocks. Each is useful alone; together they
+address both wastes above.</p>
+
+<p><strong><code>CostLedger</code></strong> records every charge against the
+node and iteration that incurred it, billing either token usage or wall-clock
+time on an hourly machine, with optional hard budget enforcement. It is the
+measurement substrate the other two blocks require and is independently useful
+to anyone working against a fixed budget.</p>
+
+<p><strong><code>TriageGate</code></strong> sits in front of the expensive
+evaluation stage and asks a cheap model whether a candidate will pass its
+tests. Crucially it returns a probability rather than a verdict, because the
+correct operating point depends on the relative cost of a wasted simulation
+versus a discarded working design. Scorers are pluggable: a local fine-tuned
+model, a frontier API, or a heuristic.</p>
+
+<p><strong><code>PlateauMonitor</code></strong> tracks improvement in the
+objective per dollar spent and halts the loop when that stays below a
+caller-set threshold for several consecutive iterations. Patience matters: one
+flat round is noise, three is a plateau.</p>
+
+<h3>2.1 What the monitor would have saved</h3>
+
+<p>Replaying CHIA's own published critical-path trajectory through
+<code>PlateauMonitor</code> requires no compute and gives a concrete number.</p>
+
+<table>
+<caption>Table 1: Counterfactual on the published critical-path run
+(14 iterations, $202.03, 47&rarr;95 MHz).</caption>
+<tr><th>Patience</th><th>Stops at</th><th class="n">Spend</th><th class="n">Saved</th><th class="n">Result</th></tr>
+<tr><td>1</td><td>iter 9</td><td class="n">$129.87</td><td class="n">35.7%</td><td class="n">95 MHz</td></tr>
+<tr><td>2</td><td>iter 10</td><td class="n">$144.30</td><td class="n">28.6%</td><td class="n">95 MHz</td></tr>
+<tr class="last"><td>3</td><td>iter 11</td><td class="n">$158.73</td><td class="n">21.4%</td><td class="n">95 MHz</td></tr>
+</table>
+
+<p class="note">The final result is unchanged in every case, because the
+skipped iterations are precisely the ones that produced nothing.</p>
+
+<h2>3. Building the gate's training data</h2>
+
+<p>The hard part of training a triage model is obtaining labels. We avoid
+collecting them by generating data whose labels are correct by construction,
+then confirming every one against a real simulator.</p>
+
+<p>We start from the 156 problems of VerilogEval, each of which supplies a
+natural-language specification, a correct reference implementation, and a test
+bench that reports mismatches against that reference. We apply scripted edits
+to each reference, then compile and simulate every variant with Icarus
+Verilog. The label is whatever the test bench actually reports, never an
+assumption.</p>
+
+<h3>3.1 Two families of edit, and why both are needed</h3>
+
+<p>Our first attempt used only edits that break behaviour: flipped
+comparisons, swapped operators, off-by-one constants, altered bit ranges,
+changed reset values, non-blocking converted to blocking, dropped assignments,
+swapped signals. The resulting dataset was <strong>79.7% FAIL</strong>. A model
+scores 80% on such a set by answering FAIL every time, which makes the
+benchmark meaningless.</p>
+
+<p>We therefore added six <em>behaviour-preserving</em> operators that mimic
+edits an agent plausibly makes without breaking anything: commutative operand
+swaps, consistent internal signal renames, redundant parentheses, reformatted
+literals (<code>4'd10</code> to <code>4'b1010</code>), reordered independent
+continuous assignments, and unused wire declarations. We also capped how often
+any single operator may fire per problem, after observing that one easy-to-spot
+edit had produced two thirds of the harmless examples and could be memorised.</p>
+
+<p>This rebalancing is not cosmetic. It changes the question the model is
+asked from "is this code broken" to "is this change harmful or harmless",
+which is the question an agentic loop actually faces.</p>
+
+<table>
+<caption>Table 2: Dataset composition after rebalancing.</caption>
+<tr><th>Property</th><th class="n">Value</th></tr>
+<tr><td>Source problems</td><td class="n">156</td></tr>
+<tr><td>Candidates generated</td><td class="n">3,171</td></tr>
+<tr><td>Compiled successfully (usable)</td><td class="n">2,571</td></tr>
+<tr><td>FAIL share</td><td class="n">44.8%</td></tr>
+<tr><td>Train / test split</td><td class="n">1,941 / 630</td></tr>
+<tr class="last"><td>Problem overlap across split</td><td class="n">0</td></tr>
+</table>
+
+<p>Candidates that fail to compile are discarded: the compiler already catches
+those for free, so they are not what a gate exists to predict. The split is
+<strong>by problem, not by example</strong>, so the model is always evaluated
+on designs it has never seen in any form. Within the test set, 289 candidates
+fail and 341 pass, making the majority-class baseline 54.1%.</p>
+
+<h2>4. Experimental setup</h2>
+
+<p>We fine-tune <code>Qwen2.5-Coder-7B-Instruct</code> with LoRA (rank 16,
+40.4M trainable parameters, 0.53% of the model) loaded in 4-bit, for two
+epochs. Training took 72 minutes on one NVIDIA L4. Loss fell from 0.23 and
+plateaued near 0.10 rather than collapsing toward zero, which is the shape of
+a learned decision rule rather than memorisation.</p>
+
+<p>Every model, local and frontier, receives the identical prompt: the
+natural-language specification plus the candidate implementation, and is asked
+for one word. Local models are scored by comparing the logits of the PASS and
+FAIL tokens at the answer position, which is deterministic, cannot produce an
+unparseable answer, and yields a probability the gate can threshold.</p>
+
+<p>We report <strong>precision on FAIL</strong> as the primary measure. A
+false FAIL silently discards a working design, which is worse for a design
+loop than paying for one additional simulation. Recall indicates how many
+simulations are saved.</p>
+
+<h2>5. Results</h2>
+
+<table>
+<caption>Table 3: All models on the same 630 held-out examples.
+Positive class is FAIL.</caption>
+<tr>
+  <th>Model</th><th class="n">Acc</th><th class="n">Prec</th>
+  <th class="n">Rec</th><th class="n">$/1k</th><th class="n">Lat</th>
+</tr>
+<tr><td>Qwen 7B, untrained</td><td class="n">61.4%</td><td class="n">56.1%</td><td class="n">73.4%</td><td class="n">0.049</td><td class="n">0.25s</td></tr>
+<tr><td><strong>Qwen 7B, tuned</strong></td><td class="n"><strong>85.2%</strong></td><td class="n"><strong>83.3%</strong></td><td class="n">84.8%</td><td class="n"><strong>0.063</strong></td><td class="n"><strong>0.32s</strong></td></tr>
+<tr><td>Gemini 2.5 Flash</td><td class="n">86.2%</td><td class="n">77.9%</td><td class="n">97.6%</td><td class="n">0.163</td><td class="n">6.47s</td></tr>
+<tr><td>Gemini 2.5 Pro</td><td class="n">81.5%</td><td class="n">71.5%</td><td class="n">99.7%</td><td class="n">0.676</td><td class="n">14.4s</td></tr>
+<tr class="last"><td>Gemini 2.5 Flash-Lite</td><td class="n">68.1%</td><td class="n">59.3%</td><td class="n">96.9%</td><td class="n">0.054</td><td class="n">0.42s</td></tr>
+</table>
+
+<p>Fine-tuning moves accuracy from 61.4% to 85.2% and precision from 56.1% to
+83.3%. Since the base model, the tuned model, the prompt and the test set are
+otherwise identical, that difference is attributable to the training data.</p>
+
+<p>Against the frontier, the tuned 7B has <strong>the highest precision of any
+model tested</strong>, at 2.6&times; lower cost and 20&times; lower latency
+than Gemini 2.5 Flash. Flash retains clearly better recall and marginally
+better raw accuracy. We also note that Flash outperforms Pro on this task
+despite costing a quarter as much, suggesting that additional reasoning does
+not help and may actively hurt.</p>
+
+<h3>5.1 Why: every frontier model over-blocks</h3>
+
+<p>Recall on FAIL between 96.9% and 99.7%, paired with precision between 59.3%
+and 77.9%, is the signature of a model that condemns nearly everything.
+Splitting accuracy by edit family shows where that comes from.</p>
+
+<table>
+<caption>Table 4: Accuracy by edit family. Benign edits preserve behaviour.</caption>
+<tr><th>Model</th><th class="n">Benign</th><th class="n">Faulty</th></tr>
+<tr><td>Qwen 7B, untrained</td><td class="n">55.6%</td><td class="n">65.6%</td></tr>
+<tr><td><strong>Qwen 7B, tuned</strong></td><td class="n"><strong>94.8%</strong></td><td class="n">79.4%</td></tr>
+<tr><td>Gemini 2.5 Flash</td><td class="n">83.7%</td><td class="n">88.5%</td></tr>
+<tr><td>Gemini 2.5 Pro</td><td class="n">74.5%</td><td class="n">86.9%</td></tr>
+<tr class="last"><td>Gemini 2.5 Flash-Lite</td><td class="n">49.2%</td><td class="n">83.5%</td></tr>
+</table>
+
+<p>The untrained model sits near chance on harmless edits. Flash-Lite, at
+49.2%, is <em>below</em> chance: it has effectively learned to answer FAIL
+unconditionally. Every model does markedly better on faulty edits than benign
+ones. The prior is consistent and wrong: a change to working code is assumed
+to be a bug.</p>
+
+<p>Fine-tuning on data that contains <em>verified-harmless</em> edits alongside
+real faults moves benign accuracy from 55.6% to 94.8%, a 39-point gain, while
+faulty accuracy also improves. This is the mechanism behind the headline
+number, and it was predicted before the experiment rather than discovered
+afterwards.</p>
+
+<h3>5.2 What this means for a loop</h3>
+
+<table>
+<caption>Table 5: Gate economics on 630 candidates (341 genuinely good).</caption>
+<tr><th>Model</th><th class="n">Sims skipped</th><th class="n">Good lost</th></tr>
+<tr><td>Qwen 7B, untrained</td><td class="n">378</td><td class="n">48.7%</td></tr>
+<tr><td><strong>Qwen 7B, tuned</strong></td><td class="n">293</td><td class="n"><strong>14.1%</strong></td></tr>
+<tr><td>Gemini 2.5 Flash</td><td class="n">362</td><td class="n">23.5%</td></tr>
+<tr><td>Gemini 2.5 Pro</td><td class="n">403</td><td class="n">34.1%</td></tr>
+<tr class="last"><td>Gemini 2.5 Flash-Lite</td><td class="n">472</td><td class="n">56.3%</td></tr>
+</table>
+
+<p>Because the gate emits a probability, its operating point is tunable. At a
+threshold of 0.90 the tuned model reaches 92.7% precision while discarding
+only <strong>14 of 341</strong> good designs (4.1%) and still skipping 192
+simulations. At 0.95 it reaches 95.0% precision and loses 8. A deployer who
+values working designs highly can move up this curve; one who values
+throughput can move down it.</p>
+
+<table>
+<caption>Table 6: Threshold sweep, tuned model.</caption>
+<tr><th class="n">Thresh</th><th class="n">Acc</th><th class="n">Prec</th><th class="n">Rec</th><th class="n">Blocked</th><th class="n">Good lost</th></tr>
+<tr><td class="n">0.30</td><td class="n">82.5%</td><td class="n">75.4%</td><td class="n">92.0%</td><td class="n">353</td><td class="n">87</td></tr>
+<tr><td class="n">0.50</td><td class="n">85.2%</td><td class="n">83.3%</td><td class="n">84.8%</td><td class="n">294</td><td class="n">49</td></tr>
+<tr><td class="n">0.70</td><td class="n">83.7%</td><td class="n">86.9%</td><td class="n">75.8%</td><td class="n">252</td><td class="n">33</td></tr>
+<tr><td class="n">0.90</td><td class="n">80.2%</td><td class="n">92.7%</td><td class="n">61.6%</td><td class="n">192</td><td class="n">14</td></tr>
+<tr class="last"><td class="n">0.95</td><td class="n">77.0%</td><td class="n">95.0%</td><td class="n">52.6%</td><td class="n">160</td><td class="n">8</td></tr>
+</table>
+
+<h2>6. Limitations</h2>
+
+<p>We report these plainly because a gate that is trusted incorrectly is worse
+than no gate.</p>
+
+<p><strong>Recall is our weakest dimension.</strong> At 84.8% we miss roughly
+one failing candidate in six, which Flash catches. A deployment that cannot
+tolerate wasted simulations should prefer Flash, or chain the two.</p>
+
+<p><strong>Faults are synthetic.</strong> Our mutations imitate plausible agent
+errors but are not drawn from real agent output. A loop's actual mistakes may
+be distributed differently, and performance on them is unmeasured.</p>
+
+<p><strong>One benchmark, small modules.</strong> VerilogEval modules are far
+smaller than a BOOM pipeline stage. Whether the result transfers to
+industrial-scale RTL is untested.</p>
+
+<p><strong>Contamination is plausible.</strong> VerilogEval predates these
+models and may appear in their training data. Our mutated variants do not, but
+the underlying problems may, which would favour the frontier baselines.</p>
+
+<p><strong>Single run, no seeds.</strong> Time constraints permitted one
+training run. We report no variance across seeds.</p>
+
+<p><strong>Benign is not perfectly benign.</strong> Five of 252 supposedly
+harmless edits did fail simulation, where a reordering was not in fact
+independent. Labels come from the simulator, so these are correct, but the
+family name is approximate.</p>
+
+<p><strong>Cost figures are indicative.</strong> Local cost assumes $0.70/hour
+for an L4 at measured throughput; frontier cost uses published per-token
+pricing. Both move.</p>
+
+<h2>7. Availability</h2>
+
+<p>Everything is released under BSD-3-Clause, matching CHIA.</p>
+
+<p><strong>Code, dataset and results:</strong><br>
+<code>github.com/venkateshrajag/chia</code></p>
+
+<p><strong>LoRA adapter:</strong><br>
+<code>huggingface.co/emailvenky/<br>chia-governor-triage-7b</code></p>
+
+<p>The repository contains the three blocks, the full generation and
+evaluation pipeline, all 2,571 labelled candidates with the train and test
+splits, and the raw predictions from every model reported here. It also
+retains the discarded 79.7%-FAIL first dataset, so the rebalancing argument in
+Section 3.1 can be checked rather than taken on trust. Every label is
+reproducible by re-running the included simulation harness against
+VerilogEval, and one script regenerates every table in this paper from the raw
+prediction files.</p>
+
+<h2>8. Conclusion</h2>
+
+<p>Agentic design loops waste money in two ways that are both fixable with
+small, reusable components: they run past the point of improvement, and they
+pay to evaluate candidates that were never going to work. We provide blocks
+for both, and show that the model inside the gate need not be large or
+expensive. A 7B model, fine-tuned for 72 minutes on one commodity GPU using
+data generated and labelled in under two minutes, predicts simulation failure
+more precisely than any frontier model we tested, because it was trained
+against the specific bias those models share. The total compute cost of every
+experiment in this paper was under ten dollars.</p>
+
+</div>
+</body>
+</html>
